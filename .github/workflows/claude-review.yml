@@ -119,6 +119,9 @@ jobs:
           prev_sha=""
           reason="no prior formal Claude review on this pull request"
 
+          # DISMISSED counts: with dismiss-stale-approvals on, every push
+          # dismisses the prior verdict, yet its commit_id and findings block
+          # are still the right cache. Only formal verdicts can be dismissed.
           last="$(
             gh api --paginate --slurp \
               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" |
@@ -127,7 +130,7 @@ jobs:
                 | map(select(
                     .user.login == $bot and
                     .submitted_at != null and
-                    (.state == "APPROVED" or .state == "CHANGES_REQUESTED")
+                    (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")
                   ))
                 | sort_by(.submitted_at) | last // empty
               '
