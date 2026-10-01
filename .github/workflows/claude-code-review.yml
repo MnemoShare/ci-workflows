@@ -1,0 +1,31 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '**/package-lock.json'
+      - '**/go.sum'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to re-review
+        required: true
+        type: number
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    uses: MnemoShare/ci-workflows/.github/workflows/claude-review.yml@v1
+    with:
+      pr_number: ${{ github.event.pull_request.number || inputs.pr_number }}
+    secrets: inherit
+    permissions:
+      contents: read
+      pull-requests: read
