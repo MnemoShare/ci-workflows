@@ -26,11 +26,17 @@ the CI workflow:
     with:
       pr_number: ${{ github.event.pull_request.number }}
       ci_gates_passed: true
-    secrets: inherit
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AUTO_APPROVE_PRIVATE_KEY: ${{ secrets.AUTO_APPROVE_PRIVATE_KEY }}
     permissions:
       contents: read
       pull-requests: read
 ```
+
+Pass only the two secrets the review needs rather than `secrets: inherit`.
+Callers pin the movable `v1` tag, and that tag shouldn't carry every org
+secret with it.
 
 ### Inputs
 
