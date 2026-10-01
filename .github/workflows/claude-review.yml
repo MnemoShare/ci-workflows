@@ -509,7 +509,7 @@ jobs:
               VERDICT: COMMENT
 
             followed by the findings block.
-          claude_args: '--model claude-sonnet-5 --allowed-tools "Read,Write,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr checks:*),Bash(cat:*)"'
+          claude_args: '--model claude-sonnet-5-5 --allowed-tools "Read,Write,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr checks:*),Bash(cat:*)"'
 
       # Fail loudly when the action exits without posting a verdict: with no
       # enforcement workflow, a silent run would otherwise look like "CI green,
