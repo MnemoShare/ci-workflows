@@ -61,6 +61,26 @@ only after they merge, so a PR can never rewrite the rules for its own review.
 - Branch protection on the target branch requires one approving review and
   dismisses stale approvals. The bot's formal review is the merge gate.
 
+### Token scope (MSC-713)
+
+The review agent processes untrusted PR content (diff, files, description) while
+holding a token minted from the App. The App installation has
+`contents: write`, `pull_requests: write` and `metadata: read` on every org
+repo; `contents: write` exists for the `mnemoshare` repo's Dependabot auto-merge
+and demo-to-dev backflow jobs, not for review. The review therefore narrows the
+token it mints:
+
+- `repositories:` limits it to the calling repository.
+- `permission-contents: read` and `permission-pull-requests: write` are the only
+  permissions on it; the token can post reviews and comments but cannot write
+  contents, merge, or reach other repos.
+- The agent's `gh api` grant is a single read-only endpoint,
+  `repos/<repo>/pulls/<n>/files`. Never widen it back to `Bash(gh api:*)`:
+  with a write-capable token that is a prompt-injection path to self-approval.
+
+`gh pr review` and `gh pr comment` remain allowed because posting the formal
+verdict is the bot's job; they only reach the PR under review.
+
 ### Releasing changes
 
 Callers pin `@v1`, so a prompt or model change reaches every repo when `v1` moves.
