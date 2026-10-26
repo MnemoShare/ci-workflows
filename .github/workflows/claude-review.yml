@@ -7,6 +7,11 @@ name: Claude Code Review
 # on push, so the formal APPROVED/CHANGES_REQUESTED on the exact head is the
 # merge gate by itself.
 #
+# A push after Claude approved does NOT cost another model run when the caller
+# passes ci_gates_passed: once its CI passed on the new head, the prior
+# approval is re-posted for that head ("carry-forward" mode). A prior BLOCK, a
+# rebase/force-push, or the claude-rereview label gets a real review.
+#
 # GitHub auth is a token minted from the org's GitHub App, passed as
 # `github_token`. With it the action skips Anthropic's OIDC exchange, whose
 # server-side check requires the running workflow file to be byte-identical to
@@ -108,6 +113,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ needs.resolve-pr.outputs.number }}
           HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
+          CI_GATES_PASSED: ${{ inputs.ci_gates_passed }}
         run: |
           set -euo pipefail
           mkdir -p .claude-review
@@ -118,6 +124,7 @@ jobs:
           mode=full
           prev_sha=""
           reason="no prior formal Claude review on this pull request"
+          rereview="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '[.labels[].name] | index("claude-rereview") != null')"
 
           # DISMISSED counts: with dismiss-stale-approvals on, every push
           # dismisses the prior verdict, yet its commit_id and findings block
@@ -171,6 +178,16 @@ jobs:
                 fi
                 mode=incremental
                 reason="prior review at $prev_sha is an ancestor of $HEAD_SHA"
+                # An approval survives later pushes: branch protection dismisses it on push, so
+                # re-post it for the new head instead of spending a model run. Callers that
+                # pass ci_gates_passed only reach this job after their CI passed on the new
+                # head. A rebase or force-push (status != ahead) never qualifies. Label
+                # claude-rereview forces a real review.
+                verdict="$(jq -r .body <<<"$last" | grep -oE 'VERDICT: (APPROVE|BLOCK|COMMENT)' | tail -1 | cut -d' ' -f2 || true)"
+                if [[ "$verdict" == APPROVE && "$rereview" != true && "$CI_GATES_PASSED" == true ]]; then
+                  mode=carry-forward
+                  reason="prior review at $prev_sha approved; carrying the approval forward to $HEAD_SHA"
+                fi
               else
                 reason="history diverged since the prior review at $prev_sha (compare status: $status)"
               fi
@@ -185,6 +202,7 @@ jobs:
 
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "prev_sha=$prev_sha" >> "$GITHUB_OUTPUT"
+          echo "rereview=$rereview" >> "$GITHUB_OUTPUT"
           {
             echo "### Claude review scope"
             echo
@@ -232,6 +250,7 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude
+        if: steps.scope.outputs.mode != 'carry-forward'
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -523,6 +542,35 @@ jobs:
       # Fail loudly when the action exits without posting a verdict: with no
       # enforcement workflow, a silent run would otherwise look like "CI green,
       # waiting on review" forever. Merge stays blocked either way (no approval).
+      - name: Carry forward prior approval
+        if: steps.scope.outputs.mode == 'carry-forward'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ needs.resolve-pr.outputs.number }}
+          HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
+          PREV_SHA: ${{ steps.scope.outputs.prev_sha }}
+        run: |
+          set -euo pipefail
+          n="$(grep -c . .claude-review/incremental-files.txt || true)"
+          {
+            echo "## Approval carried forward"
+            echo
+            echo "Claude approved this pull request at \`${PREV_SHA:0:10}\`. The ${n} file(s) below changed after that approval and every CI gate passed again on \`${HEAD_SHA:0:10}\`, so the approval is carried forward without a new model review. Add the \`claude-rereview\` label and push (or re-run this job) to force a fresh review."
+            echo
+            if [[ "$n" -gt 0 ]]; then sed 's/^/- `/; s/$/`/' .claude-review/incremental-files.txt; echo; fi
+            echo "VERDICT: APPROVE"
+            echo "<!-- claude-findings"
+            jq -c --arg head "$HEAD_SHA" '{schema:1, head:$head, findings:(.findings // [])}' .claude-review/prior-findings.json
+            echo "-->"
+          } > .claude-review/carry-forward.md
+          gh pr review "$PR_NUMBER" --approve --body-file .claude-review/carry-forward.md
+      - name: Clear claude-rereview label
+        if: steps.scope.outputs.rereview == 'true' && steps.claude.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ needs.resolve-pr.outputs.number }}
+        run: gh pr edit "$PR_NUMBER" --remove-label claude-rereview 2>/dev/null || true
+
       - name: Require terminal exact-head Claude review
         if: always()
         env:
