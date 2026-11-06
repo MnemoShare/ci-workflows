@@ -60,6 +60,7 @@ only after they merge, so a PR can never rewrite the rules for its own review.
   and reviews post as `mnemoshare-auto-approve[bot]`.
 - Branch protection on the target branch requires one approving review and
   dismisses stale approvals. The bot's formal review is the merge gate.
+- Optional variable `LOCAL_REVIEW_ATTESTERS` (see Local-review attestations).
 
 ### Token scope (MSC-713)
 
@@ -80,6 +81,44 @@ token it mints:
 
 `gh pr review` and `gh pr comment` remain allowed because posting the formal
 verdict is the bot's job; they only reach the PR under review.
+
+### Local-review attestations
+
+A local adversarial review can stand in for the hosted model run. The
+`pr-attest` skill posts an issue comment that starts with
+`<!-- local-review head=<full sha> model=... rounds=... -->`. When the comment
+meets every condition below, the workflow approves that head as the App bot
+("Approval from local review", quoting the comment link) and runs no model.
+This "attested" mode outranks carry-forward and a full review.
+
+- The author is a human (not a bot) listed in `LOCAL_REVIEW_ATTESTERS`.
+- The comment starts with the marker and names exactly the PR head SHA being reviewed.
+- The comment was never edited (`lastEditedAt` is null), since any write
+  collaborator can edit another user's comment.
+- The PR does not carry the `claude-rereview` label, which forces a hosted review.
+
+An attested approval does not imply CI passed: attested mode is independent of
+`ci_gates_passed`, and a parallel caller can approve before CI finishes (a hosted
+full review has the same exposure). Repos should require their CI checks in
+branch protection, or run the review after CI with `ci_gates_passed: true`.
+
+Before posting any approval (attested or carry-forward) the workflow re-reads the
+PR head and aborts without posting if it moved since the review was planned. Both
+approvals are posted with `commit_id` set to the reviewed head.
+
+A push after the attestation changes the head, so the attestation no longer
+matches and the normal modes apply. If the lookup fails, the normal review runs.
+
+`LOCAL_REVIEW_ATTESTERS` is an org or repo variable holding comma-separated
+logins (case-insensitive). Default `dwoolworth`; `off` disables attestations; an
+empty value falls back to the default. In a reusable workflow `vars` resolve in
+the caller's context, so callers need no change: set the variable on the org or
+the repo. The lookup reads comments through GraphQL with the job's read-only
+`GITHUB_TOKEN` (`pull-requests: read`); no permission or tool grant changed.
+
+Run the harness for this logic locally with `tests/attestation.sh` (needs
+`python3` with PyYAML and `jq`); it executes the workflow's real scope and
+approval steps against a stub `gh` and fixture comments. CI runs it on every PR.
 
 ### Releasing changes
 
