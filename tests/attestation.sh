@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the real "Plan review scope", attestation and carry-forward steps from claude-review.yml against a stub
+# Runs the real scope, attested and carry-forward steps of claude-review.yml against a stub
 # `gh` serving fixture JSON, and asserts the resulting review mode.
 set -euo pipefail
 
