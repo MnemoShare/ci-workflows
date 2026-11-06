@@ -246,11 +246,13 @@ jobs:
               incremental_files: ($files | split("\n") | map(select(length > 0)))}' \
             > .claude-review/scope.json
 
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "prev_sha=$prev_sha" >> "$GITHUB_OUTPUT"
-          echo "rereview=$rereview" >> "$GITHUB_OUTPUT"
-          echo "attester=$attester" >> "$GITHUB_OUTPUT"
-          echo "attest_url=$attest_url" >> "$GITHUB_OUTPUT"
+          {
+            echo "mode=$mode"
+            echo "prev_sha=$prev_sha"
+            echo "rereview=$rereview"
+            echo "attester=$attester"
+            echo "attest_url=$attest_url"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "### Claude review scope"
             echo
@@ -316,8 +318,13 @@ jobs:
             jq -nc --arg head "$HEAD_SHA" '{schema:1, head:$head, findings:[]}'
             echo "-->"
           } > .claude-review/attested.md
-          # commit_id pins the approval to the reviewed head; `gh pr review`
-          # would attach it to whatever the PR head is at posting time.
+          # Branch protection dismisses approvals on push; a head that moved
+          # since resolve-pr would otherwise get an approval for code never read.
+          live="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
+          if [[ "$live" != "$HEAD_SHA" ]]; then
+            echo "::error::PR head moved to $live while reviewing $HEAD_SHA; not approving"
+            exit 1
+          fi
           gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
             -f commit_id="$HEAD_SHA" -f event=APPROVE -F body=@.claude-review/attested.md > /dev/null
 
@@ -636,7 +643,15 @@ jobs:
             jq -c --arg head "$HEAD_SHA" '{schema:1, head:$head, findings:(.findings // [])}' .claude-review/prior-findings.json
             echo "-->"
           } > .claude-review/carry-forward.md
-          gh pr review "$PR_NUMBER" --approve --body-file .claude-review/carry-forward.md
+          # Branch protection dismisses approvals on push; a head that moved
+          # since resolve-pr would otherwise get an approval for code never read.
+          live="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
+          if [[ "$live" != "$HEAD_SHA" ]]; then
+            echo "::error::PR head moved to $live while reviewing $HEAD_SHA; not approving"
+            exit 1
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            -f commit_id="$HEAD_SHA" -f event=APPROVE -F body=@.claude-review/carry-forward.md > /dev/null
       - name: Clear claude-rereview label
         if: steps.scope.outputs.rereview == 'true' && steps.claude.outcome == 'success'
         env:

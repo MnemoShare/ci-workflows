@@ -97,6 +97,15 @@ This "attested" mode outranks carry-forward and a full review.
   collaborator can edit another user's comment.
 - The PR does not carry the `claude-rereview` label, which forces a hosted review.
 
+An attested approval does not imply CI passed: attested mode is independent of
+`ci_gates_passed`, and a parallel caller can approve before CI finishes (a hosted
+full review has the same exposure). Repos should require their CI checks in
+branch protection, or run the review after CI with `ci_gates_passed: true`.
+
+Before posting any approval (attested or carry-forward) the workflow re-reads the
+PR head and aborts without posting if it moved since the review was planned. Both
+approvals are posted with `commit_id` set to the reviewed head.
+
 A push after the attestation changes the head, so the attestation no longer
 matches and the normal modes apply. If the lookup fails, the normal review runs.
 
@@ -108,8 +117,8 @@ the repo. The lookup reads comments through GraphQL with the job's read-only
 `GITHUB_TOKEN` (`pull-requests: read`); no permission or tool grant changed.
 
 Run the harness for this logic locally with `tests/attestation.sh` (needs
-`python3` with PyYAML and `jq`); it executes the workflow's real scope step
-against a stub `gh` and fixture comments.
+`python3` with PyYAML and `jq`); it executes the workflow's real scope and
+approval steps against a stub `gh` and fixture comments. CI runs it on every PR.
 
 ### Releasing changes
 
