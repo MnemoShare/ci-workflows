@@ -71,9 +71,10 @@ must be stored there too:
 
 - Org Dependabot secret `ANTHROPIC_API_KEY`
 - Org Dependabot secret `AUTO_APPROVE_PRIVATE_KEY`, shared with **selected
-  repositories** only. Prefer the key of a separate review-only App
-  (`contents: read`, `pull_requests: write`): the main App can write contents in
-  every org repo.
+  repositories** only. It must be the key of the same `mnemoshare-auto-approve`
+  App: the client ID comes from `vars.AUTO_APPROVE_APP_CLIENT_ID` (one value for
+  every run) and only reviews by `REVIEW_BOT_LOGIN` count. That App can write
+  contents in every org repo, so keep the sharing narrow.
 
 Until both exist, a Dependabot-triggered run starts `resolve-pr`, prints a
 notice and skips the review instead of failing. Any other run that lacks a key
