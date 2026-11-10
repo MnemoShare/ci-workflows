@@ -98,7 +98,7 @@ jobs:
               exit 1
             fi
             can_review=false
-            echo "::notice::Dependabot PR not reviewed: add ANTHROPIC_API_KEY and AUTO_APPROVE_PRIVATE_KEY as org Dependabot secrets"
+            echo "::notice::Dependabot run not reviewed: needs Dependabot secrets ANTHROPIC_API_KEY and AUTO_APPROVE_PRIVATE_KEY, and vars.AUTO_APPROVE_APP_CLIENT_ID"
           fi
           {
             echo "number=$(jq -r .number <<<"$PR_JSON")"
