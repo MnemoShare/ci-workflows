@@ -49,11 +49,14 @@ on:
         required: false
         type: boolean
         default: false
+    # Not `required`: a Dependabot-triggered run receives Dependabot secrets,
+    # not Actions secrets, so they can be legitimately absent there.
+    # resolve-pr fails every other run that lacks them.
     secrets:
       ANTHROPIC_API_KEY:
-        required: true
+        required: false
       AUTO_APPROVE_PRIVATE_KEY:
-        required: true
+        required: false
 
 jobs:
   resolve-pr:
@@ -68,6 +71,7 @@ jobs:
       author: ${{ steps.pr.outputs.author }}
       base_ref: ${{ steps.pr.outputs.base_ref }}
       draft: ${{ steps.pr.outputs.draft }}
+      can_review: ${{ steps.pr.outputs.can_review }}
     steps:
       - name: Resolve pull request
         id: pr
@@ -77,22 +81,38 @@ jobs:
           # Present only when called from a pull_request run. Prefer it so the
           # review lands on the head CI validated, not one pushed mid-run.
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The secret store follows the triggering actor, not the PR author: a
+          # human run of a Dependabot PR gets Actions secrets and must have them.
+          ACTOR: ${{ github.actor }}
+          SECRETS_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' && secrets.AUTO_APPROVE_PRIVATE_KEY != '' && vars.AUTO_APPROVE_APP_CLIENT_ID != '' }}
         run: |
           set -euo pipefail
           PR_JSON=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+          author="$(jq -r .user.login <<<"$PR_JSON")"
+          # Dependabot runs are reviewed like any other once the org's Dependabot
+          # secrets hold both keys; until then they are skipped, not failed.
+          can_review=true
+          if [[ "$SECRETS_PRESENT" != "true" ]]; then
+            if [[ "$ACTOR" != "dependabot[bot]" ]]; then
+              echo "::error::ANTHROPIC_API_KEY, AUTO_APPROVE_PRIVATE_KEY and vars.AUTO_APPROVE_APP_CLIENT_ID must all reach this workflow"
+              exit 1
+            fi
+            can_review=false
+            echo "::notice::Dependabot run not reviewed: needs Dependabot secrets ANTHROPIC_API_KEY and AUTO_APPROVE_PRIVATE_KEY, and vars.AUTO_APPROVE_APP_CLIENT_ID"
+          fi
           {
             echo "number=$(jq -r .number <<<"$PR_JSON")"
             echo "head_sha=${EVENT_HEAD_SHA:-$(jq -r .head.sha <<<"$PR_JSON")}"
-            echo "author=$(jq -r .user.login <<<"$PR_JSON")"
+            echo "author=$author"
             echo "base_ref=$(jq -r .base.ref <<<"$PR_JSON")"
             echo "draft=$(jq -r .draft <<<"$PR_JSON")"
+            echo "can_review=$can_review"
           } >> "$GITHUB_OUTPUT"
 
   claude-review:
     name: Claude Code Review
     needs: resolve-pr
-    # Dependabot bumps are machine-generated and gated by CI + auto-approve.
-    if: needs.resolve-pr.outputs.author != 'dependabot[bot]' && needs.resolve-pr.outputs.draft != 'true'
+    if: needs.resolve-pr.outputs.can_review == 'true' && needs.resolve-pr.outputs.draft != 'true'
     runs-on: ${{ inputs.runner }}
     # GITHUB_TOKEN only reads here; every write goes through the app token.
     timeout-minutes: 30
@@ -337,7 +357,8 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          allowed_bots: mnemoshare-auto-approve
+          # dependabot: the action refuses a bot GITHUB_ACTOR not listed here.
+          allowed_bots: mnemoshare-auto-approve,dependabot
           classify_inline_comments: true
           prompt: |
             CRITICAL — DIFF BASE (read before touching any diff/history tool):
@@ -619,7 +640,7 @@ jobs:
               VERDICT: COMMENT
 
             followed by the findings block.
-          claude_args: '--model claude-sonnet-5-5 --allowed-tools "Read,Write,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh api repos/${{ github.repository }}/pulls/${{ needs.resolve-pr.outputs.number }}/files:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr checks:*),Bash(cat:*)"'
+          claude_args: '--model claude-sonnet-5-5 --allowed-tools "Read,Write,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh api repos/${{ github.repository }}/pulls/${{ needs.resolve-pr.outputs.number }}/files:*),Bash(gh pr comment ${{ needs.resolve-pr.outputs.number }}:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review ${{ needs.resolve-pr.outputs.number }}:*),Bash(gh pr checks:*),Bash(cat:*)"'
 
       # Fail loudly when the action exits without posting a verdict: with no
       # enforcement workflow, a silent run would otherwise look like "CI green,

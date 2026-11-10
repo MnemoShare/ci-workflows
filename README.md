@@ -62,6 +62,43 @@ only after they merge, so a PR can never rewrite the rules for its own review.
   dismisses stale approvals. The bot's formal review is the merge gate.
 - Optional variable `LOCAL_REVIEW_ATTESTERS` (see Local-review attestations).
 
+### Dependabot PRs (MSC-1343)
+
+Dependabot PRs get the same review as any other PR, and its approval satisfies
+branch protection so auto-merge can proceed. A run that Dependabot triggers
+receives the org's **Dependabot secrets**, not its Actions secrets, so both keys
+must be stored there too:
+
+- Org Dependabot secret `ANTHROPIC_API_KEY`
+- Org Dependabot secret `AUTO_APPROVE_PRIVATE_KEY`, shared with **selected
+  repositories** only. It must be the key of the same `mnemoshare-auto-approve`
+  App: the client ID comes from `vars.AUTO_APPROVE_APP_CLIENT_ID` (one value for
+  every run) and only reviews by `REVIEW_BOT_LOGIN` count. That App can write
+  contents in every org repo, so keep the sharing narrow.
+
+Until both exist, a Dependabot-triggered run starts `resolve-pr`, prints a
+notice and skips the review instead of failing. Any other run that lacks a key
+fails in `resolve-pr`, including a human re-run of a Dependabot PR (it gets
+Actions secrets).
+
+Existing callers: delete the `if: github.event.pull_request.user.login !=
+'dependabot[bot]'` line from your caller once `v1` includes this change.
+
+What the review gives you on a bump: it reads the manifest and lockfile diff and
+the PR body, not the upstream code, so it adds little supply-chain assurance.
+The PR body carries upstream release notes, which is text from outside the org
+reaching the model; the token the model holds can only review and comment on
+this PR (see Token scope).
+
+Keep the Dependabot copies of these secrets out of everything but the review
+caller. They leak through:
+
+- `secrets: inherit` in any workflow Dependabot triggers;
+- a CI job that maps either key and also installs the bumped package
+  (postinstall scripts, compromised actions);
+- non-ephemeral self-hosted runners, where an earlier job's code persists into
+  the review job.
+
 ### Token scope (MSC-713)
 
 The review agent processes untrusted PR content (diff, files, description) while
@@ -80,7 +117,9 @@ token it mints:
   with a write-capable token that is a prompt-injection path to self-approval.
 
 `gh pr review` and `gh pr comment` remain allowed because posting the formal
-verdict is the bot's job; they only reach the PR under review.
+verdict is the bot's job. Both grants are pinned to the PR number
+(`gh pr review <n>:*`, `gh pr comment <n>:*`), so the agent cannot review or
+comment on another PR.
 
 ### Local-review attestations
 
