@@ -62,6 +62,26 @@ only after they merge, so a PR can never rewrite the rules for its own review.
   dismisses stale approvals. The bot's formal review is the merge gate.
 - Optional variable `LOCAL_REVIEW_ATTESTERS` (see Local-review attestations).
 
+### Dependabot PRs (MSC-1343)
+
+Dependabot PRs get the same review as any other PR, and its approval satisfies
+branch protection so auto-merge can proceed. A workflow run that Dependabot
+triggers receives the org's **Dependabot secrets**, not its Actions secrets, so
+the review needs both keys stored there as well:
+
+- Org Dependabot secret `ANTHROPIC_API_KEY`
+- Org Dependabot secret `AUTO_APPROVE_PRIVATE_KEY`
+
+Until both exist, a Dependabot PR is skipped with a notice instead of failing,
+and the shared workflow approves nothing for it. Any other run that lacks either
+key fails in `resolve-pr`.
+
+Reference these two Dependabot secrets only from the review caller. Other
+Dependabot-triggered workflows (the repo's CI, which installs the bumped
+package) must not receive them. The review mints its App token scoped to the
+calling repo with `contents: read`, as described below, so the private key never
+reaches the model as a write-capable credential.
+
 ### Token scope (MSC-713)
 
 The review agent processes untrusted PR content (diff, files, description) while

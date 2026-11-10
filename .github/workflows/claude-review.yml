@@ -49,11 +49,14 @@ on:
         required: false
         type: boolean
         default: false
+    # Not `required`: a Dependabot-triggered run receives Dependabot secrets,
+    # not Actions secrets, so they can be legitimately absent there.
+    # resolve-pr fails every other run that lacks them.
     secrets:
       ANTHROPIC_API_KEY:
-        required: true
+        required: false
       AUTO_APPROVE_PRIVATE_KEY:
-        required: true
+        required: false
 
 jobs:
   resolve-pr:
@@ -68,6 +71,7 @@ jobs:
       author: ${{ steps.pr.outputs.author }}
       base_ref: ${{ steps.pr.outputs.base_ref }}
       draft: ${{ steps.pr.outputs.draft }}
+      can_review: ${{ steps.pr.outputs.can_review }}
     steps:
       - name: Resolve pull request
         id: pr
@@ -77,22 +81,35 @@ jobs:
           # Present only when called from a pull_request run. Prefer it so the
           # review lands on the head CI validated, not one pushed mid-run.
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SECRETS_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' && secrets.AUTO_APPROVE_PRIVATE_KEY != '' }}
         run: |
           set -euo pipefail
           PR_JSON=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+          author="$(jq -r .user.login <<<"$PR_JSON")"
+          # Dependabot PRs are reviewed like any other once the org's Dependabot
+          # secrets hold both keys; until then they are skipped, not failed.
+          can_review=true
+          if [[ "$SECRETS_PRESENT" != "true" ]]; then
+            if [[ "$author" != "dependabot[bot]" ]]; then
+              echo "::error::ANTHROPIC_API_KEY and AUTO_APPROVE_PRIVATE_KEY must both be passed to this workflow"
+              exit 1
+            fi
+            can_review=false
+            echo "::notice::Dependabot PR not reviewed: add ANTHROPIC_API_KEY and AUTO_APPROVE_PRIVATE_KEY as org Dependabot secrets"
+          fi
           {
             echo "number=$(jq -r .number <<<"$PR_JSON")"
             echo "head_sha=${EVENT_HEAD_SHA:-$(jq -r .head.sha <<<"$PR_JSON")}"
-            echo "author=$(jq -r .user.login <<<"$PR_JSON")"
+            echo "author=$author"
             echo "base_ref=$(jq -r .base.ref <<<"$PR_JSON")"
             echo "draft=$(jq -r .draft <<<"$PR_JSON")"
+            echo "can_review=$can_review"
           } >> "$GITHUB_OUTPUT"
 
   claude-review:
     name: Claude Code Review
     needs: resolve-pr
-    # Dependabot bumps are machine-generated and gated by CI + auto-approve.
-    if: needs.resolve-pr.outputs.author != 'dependabot[bot]' && needs.resolve-pr.outputs.draft != 'true'
+    if: needs.resolve-pr.outputs.can_review == 'true' && needs.resolve-pr.outputs.draft != 'true'
     runs-on: ${{ inputs.runner }}
     # GITHUB_TOKEN only reads here; every write goes through the app token.
     timeout-minutes: 30
