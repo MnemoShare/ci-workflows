@@ -11,14 +11,16 @@ python3 -I - "${WORKFLOW:-$root/.github/workflows/claude-review.yml}" "$work/ste
 import sys, yaml
 wf = yaml.safe_load(open(sys.argv[1]))
 steps = {s["name"]: s["run"] for s in wf["jobs"]["claude-review"]["steps"] if "run" in s}
+steps.update({s["name"]: s["run"] for s in wf["jobs"]["resolve-pr"]["steps"] if "run" in s})
 for name, key in (("Plan review scope", "scope"), ("Approve from local review attestation", "attested"),
-                  ("Carry forward prior approval", "carry")):
+                  ("Carry forward prior approval", "carry"), ("Resolve pull request", "resolve")):
     open(sys.argv[2] + "." + key, "w").write(steps[name])
 PY
 
 mkdir -p "$work/bin"
 cat > "$work/bin/gh" <<'STUB'
 #!/usr/bin/env bash
+if [[ -n "${PR_JSON:-}" ]]; then echo "$PR_JSON"; exit 0; fi
 case "$*" in
   *"-X POST"*) echo "$*" >> "$GH_LOG" ;;
   *"api graphql"*) cat "$FIXTURE"; [[ -z "${GRAPHQL_FAIL:-}" ]] || exit 1 ;;
@@ -107,5 +109,21 @@ post "attested approval pins commit_id"        attested "$head"  1 0
 post "attested aborts when head moved"         attested "$other" 0 1
 post "carry-forward approval pins commit_id"   carry    "$head"  1 0
 post "carry-forward aborts when head moved"    carry    "$other" 0 1
+
+resolve() { # name actor secrets_present want_rc want_can_review
+  local name="$1" rc=0 got
+  : > "$work/out"
+  PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/out" GITHUB_REPOSITORY=o/r PR_NUMBER=7 \
+    PR_JSON='{"number":7,"head":{"sha":"abc"},"user":{"login":"dependabot[bot]"},"base":{"ref":"main"},"draft":false}' \
+    ACTOR="$2" SECRETS_PRESENT="$3" bash "$work/step.resolve" >/dev/null 2>&1 || rc=$?
+  got="$(sed -n 's/^can_review=//p' "$work/out")"
+  if [[ ( "$4" == 0 && "$rc" == 0 || "$4" != 0 && "$rc" != 0 ) && "$got" == "$5" ]]; then
+    echo "ok   $name"
+  else echo "FAIL $name: rc=$rc can_review=$got"; fail=1; fi
+}
+resolve "dependabot run without secrets skips"   'dependabot[bot]' false 0 false
+resolve "dependabot run with secrets reviews"    'dependabot[bot]' true  0 true
+resolve "human run without secrets fails"        alice             false 1 ""
+resolve "human run with secrets reviews"         alice             true  0 true
 
 exit "$fail"

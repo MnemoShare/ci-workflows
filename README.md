@@ -65,22 +65,38 @@ only after they merge, so a PR can never rewrite the rules for its own review.
 ### Dependabot PRs (MSC-1343)
 
 Dependabot PRs get the same review as any other PR, and its approval satisfies
-branch protection so auto-merge can proceed. A workflow run that Dependabot
-triggers receives the org's **Dependabot secrets**, not its Actions secrets, so
-the review needs both keys stored there as well:
+branch protection so auto-merge can proceed. A run that Dependabot triggers
+receives the org's **Dependabot secrets**, not its Actions secrets, so both keys
+must be stored there too:
 
 - Org Dependabot secret `ANTHROPIC_API_KEY`
-- Org Dependabot secret `AUTO_APPROVE_PRIVATE_KEY`
+- Org Dependabot secret `AUTO_APPROVE_PRIVATE_KEY`, shared with **selected
+  repositories** only. Prefer the key of a separate review-only App
+  (`contents: read`, `pull_requests: write`): the main App can write contents in
+  every org repo.
 
-Until both exist, a Dependabot PR is skipped with a notice instead of failing,
-and the shared workflow approves nothing for it. Any other run that lacks either
-key fails in `resolve-pr`.
+Until both exist, a Dependabot-triggered run starts `resolve-pr`, prints a
+notice and skips the review instead of failing. Any other run that lacks a key
+fails in `resolve-pr`, including a human re-run of a Dependabot PR (it gets
+Actions secrets).
 
-Reference these two Dependabot secrets only from the review caller. Other
-Dependabot-triggered workflows (the repo's CI, which installs the bumped
-package) must not receive them. The review mints its App token scoped to the
-calling repo with `contents: read`, as described below, so the private key never
-reaches the model as a write-capable credential.
+Existing callers: delete the `if: github.event.pull_request.user.login !=
+'dependabot[bot]'` line from your caller once `v1` includes this change.
+
+What the review gives you on a bump: it reads the manifest and lockfile diff and
+the PR body, not the upstream code, so it adds little supply-chain assurance.
+The PR body carries upstream release notes, which is text from outside the org
+reaching the model; the token the model holds can only review and comment on
+this PR (see Token scope).
+
+Keep the Dependabot copies of these secrets out of everything but the review
+caller. They leak through:
+
+- `secrets: inherit` in any workflow Dependabot triggers;
+- a CI job that maps either key and also installs the bumped package
+  (postinstall scripts, compromised actions);
+- non-ephemeral self-hosted runners, where an earlier job's code persists into
+  the review job.
 
 ### Token scope (MSC-713)
 
@@ -100,7 +116,9 @@ token it mints:
   with a write-capable token that is a prompt-injection path to self-approval.
 
 `gh pr review` and `gh pr comment` remain allowed because posting the formal
-verdict is the bot's job; they only reach the PR under review.
+verdict is the bot's job. Both grants are pinned to the PR number
+(`gh pr review <n>:*`, `gh pr comment <n>:*`), so the agent cannot review or
+comment on another PR.
 
 ### Local-review attestations
 
